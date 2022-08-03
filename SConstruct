@@ -58,7 +58,7 @@ def generate_sdkconfig_header(target, source, env):
 
 
 MINGW = 'mingw' in COMMAND_LINE_TARGETS
-PROGRAM = "simulated.exe" if MINGW else "simulated"
+PROGRAM = "app.exe" if MINGW else "app"
 MAIN = "main"
 SIMULATOR = 'simulator'
 COMPONENTS = "components"
