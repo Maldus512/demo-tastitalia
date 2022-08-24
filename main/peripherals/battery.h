@@ -1,0 +1,5 @@
+#ifndef BATTERY_H_INCLUDED
+#define BATTERY_H_INCLUDED
+
+
+#endif
