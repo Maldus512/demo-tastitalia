@@ -13,8 +13,29 @@ typedef enum {
 } leds_t;
 
 
+/**
+ * @brief Initialize the LED module
+ * 
+ */
 void leds_init(void);
+
+
+/**
+ * @brief Change LED brightness with a fading effect over time
+ * 
+ * @param led 
+ * @param value 
+ * @param fade_time 
+ */
 void leds_fade(leds_t led, uint8_t value, uint32_t fade_time);
+
+
+/**
+ * @brief Change LED brightness immediately
+ * 
+ * @param led 
+ * @param value 
+ */
 void leds_set(leds_t led, uint8_t value);
 
 

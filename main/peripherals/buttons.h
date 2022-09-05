@@ -13,7 +13,19 @@ typedef enum {
 } buttons_t;
 
 
+/**
+ * @brief Buttons initialization
+ * 
+ */
 void    buttons_init(void);
+
+
+/**
+ * @brief Get a button event (if any)
+ * 
+ * @param update 
+ * @return uint8_t 
+ */
 uint8_t buttons_event(keypad_update_t *update);
 
 

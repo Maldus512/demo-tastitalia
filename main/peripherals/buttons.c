@@ -1,3 +1,14 @@
+/**
+ * @file buttons.c
+ * @author Maldus512 ()
+ * @brief Touch buttons module
+ * @version 0.1
+ * @date 2022-09-05
+ *
+ * @copyright Copyright (c) 2022
+ *
+ */
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "freertos/queue.h"
@@ -9,10 +20,10 @@
 #include "utils/utils.h"
 
 
-#define TP_THRESHOLD 50
+#define TP_THRESHOLD 600UL
 
 
-static uint16_t read_button(buttons_t button);
+static uint32_t read_button(buttons_t button);
 static void     tp_timer(TimerHandle_t timer);
 
 
@@ -26,7 +37,7 @@ static const touch_pad_t pads[] = {
 };
 
 static QueueHandle_t queue             = NULL;
-static uint16_t      initial_values[4] = {0};
+static uint32_t      initial_values[4] = {0};
 static keypad_key_t  buttons[]         = {
     KEYPAD_KEY(0x01, BUTTONS_LEFT_ARROW),
     KEYPAD_KEY(0x02, BUTTONS_LEFT_SYMBOL),
@@ -44,15 +55,24 @@ void buttons_init(void) {
 
     /* Initialize touch pad peripheral. */
     ESP_ERROR_CHECK(touch_pad_init());
-    // Set reference voltage for charging/discharging
-    // In this case, the high reference valtage will be 2.7V - 1V = 1.7V
-    // The low reference voltage will be 0.5
-    // The larger the range, the larger the pulse count value.
-    touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V);
 
     for (size_t i = 0; i < sizeof(pads) / sizeof(pads[0]); i++) {
-        ESP_ERROR_CHECK(touch_pad_config(pads[i], 0));
+        ESP_ERROR_CHECK(touch_pad_config(pads[i]));
     }
+
+    /* Denoise setting at TouchSensor 0. */
+    touch_pad_denoise_t denoise = {
+        /* The bits to be cancelled are determined according to the noise level. */
+        .grade     = TOUCH_PAD_DENOISE_BIT4,
+        .cap_level = TOUCH_PAD_DENOISE_CAP_L4,
+    };
+    touch_pad_denoise_set_config(&denoise);
+    touch_pad_denoise_enable();
+    ESP_LOGI(TAG, "Denoise function init");
+
+    /* Enable touch sensor clock. Work mode is "timer trigger". */
+    touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);
+    touch_pad_fsm_start();
 
     vTaskDelay(pdMS_TO_TICKS(500));
     ESP_LOGI(TAG, "Calibrating values");
@@ -78,28 +98,39 @@ uint8_t buttons_event(keypad_update_t *update) {
 }
 
 
-static uint16_t read_button(buttons_t button) {
-    uint16_t touch_value = 0;
-    touch_pad_read(pads[button], &touch_value);     // read raw data.
+/**
+ * @brief Read a touch button capacitance
+ *
+ * @param button
+ * @return uint32_t
+ */
+static uint32_t read_button(buttons_t button) {
+    uint32_t touch_value = 0;
+    touch_pad_read_raw_data(pads[button], &touch_value);     // read raw data.
     return touch_value;
 }
 
 
+/**
+ * @brief recurring touch button read function
+ *
+ * @param timer
+ */
 static void tp_timer(TimerHandle_t timer) {
     unsigned int keymap = 0;
 
-    uint16_t values[4] = {0};
+    uint32_t values[4] = {0};
 
     for (buttons_t i = 0; i < sizeof(pads) / sizeof(pads[0]); i++) {
-        uint16_t touch_value = read_button(i);
+        uint32_t touch_value = read_button(i);
         values[i]            = touch_value;
-        if (touch_value < initial_values[i] - TP_THRESHOLD) {
+        if (touch_value > initial_values[i] + TP_THRESHOLD) {
             keymap |= (1 << i);
         }
     }
 
-    // ESP_LOGI(TAG, "%6i %6i %6i %6i", initial_values[0], initial_values[1], initial_values[2], initial_values[3]);
-    // ESP_LOGI(TAG, "%6i %6i %6i %6i", values[0], values[1], values[2], values[3]);
+    //ESP_LOGI(TAG, "%6i %6i %6i %6i", initial_values[0], initial_values[1], initial_values[2], initial_values[3]);
+    //ESP_LOGI(TAG, "%6i %6i %6i %6i", values[0], values[1], values[2], values[3]);
 
     keypad_update_t update = keypad_routine(buttons, 100, 1500, 100, get_millis(), keymap);
     if (update.event != KEY_NOTHING) {

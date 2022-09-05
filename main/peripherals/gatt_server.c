@@ -1,3 +1,13 @@
+/**
+ * @file gatt_server.c
+ * @author Maldus512 ()
+ * @brief BLE GATT server module
+ * @version 0.1
+ * @date 2022-09-05
+ *
+ * @copyright Copyright (c) 2022
+ *
+ */
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,8 +23,10 @@
 #include "esp_bt_main.h"
 #include "gatt_server.h"
 #include "esp_gatt_common_api.h"
+#include "serializer/serializer.h"
 
 #include "leds.h"
+
 
 #define PROFILE_NUM        1
 #define PROFILE_APP_IDX    0
@@ -23,11 +35,11 @@
 #define SVC_INST_ID        0
 
 /* The max length of characteristic value. When the GATT client performs a write or prepare write operation,
- *  the data length must be less than GATTS_DEMO_CHAR_VAL_LEN_MAX.
+ *  the data length must be less than GATTS_CHAR_VAL_LEN_MAX.
  */
-#define GATTS_DEMO_CHAR_VAL_LEN_MAX 500
-#define PREPARE_BUF_MAX_SIZE        1024
-#define CHAR_DECLARATION_SIZE       (sizeof(uint8_t))
+#define GATTS_CHAR_VAL_LEN_MAX 500
+#define PREPARE_BUF_MAX_SIZE   1024
+#define CHAR_DECLARATION_SIZE  (sizeof(uint8_t))
 
 #define ADV_CONFIG_FLAG      (1 << 0)
 #define SCAN_RSP_CONFIG_FLAG (1 << 1)
@@ -124,8 +136,9 @@ static struct gatts_profile_inst heart_rate_profile_tab[PROFILE_NUM] = {
 
 /* Service */
 static const uint16_t GATTS_SERVICE_UUID_TEST = 0x00FF;
-static const uint16_t GATTS_CHAR_UUID_TEST_A  = 0xFF01;
-static const uint16_t GATTS_CHAR_UUID_TEST_C  = 0xFF02;
+static const uint16_t GATTS_CHAR_UUID_BUTTONS = 0x0001;
+static const uint16_t GATTS_CHAR_UUID_LEDS    = 0x0002;
+static const uint16_t GATTS_CHAR_UUID_BATTERY = 0x0003;
 
 static const uint16_t    primary_service_uuid       = ESP_GATT_UUID_PRI_SERVICE;
 static const uint16_t    character_declaration_uuid = ESP_GATT_UUID_CHAR_DECLARE;
@@ -134,6 +147,7 @@ static const uint8_t     char_prop_read_write       = ESP_GATT_CHAR_PROP_BIT_WRI
 static SemaphoreHandle_t sem                        = NULL;
 static uint8_t           buttons_value[4]           = {0};
 static uint8_t           leds_value[4]              = {0};
+static uint8_t           battery_adc_value[4]       = {0};
 
 
 /* Full Database Description - Used to add attributes into the database */
@@ -147,26 +161,38 @@ static const esp_gatts_attr_db_t gatt_db[HRS_IDX_NB] = {
     [IDX_CHAR_BUTTONS] = {{ESP_GATT_AUTO_RSP},
                           {ESP_UUID_LEN_16, (uint8_t *)&character_declaration_uuid, ESP_GATT_PERM_READ,
                            CHAR_DECLARATION_SIZE, CHAR_DECLARATION_SIZE, (uint8_t *)&char_prop_read}},
-
     /* Characteristic Value */
     [IDX_CHAR_VAL_BUTTONS] = {{ESP_GATT_RSP_BY_APP},
-                              {ESP_UUID_LEN_16, (uint8_t *)&GATTS_CHAR_UUID_TEST_A,
-                               ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, GATTS_DEMO_CHAR_VAL_LEN_MAX,
-                               sizeof(buttons_value), (uint8_t *)buttons_value}},
+                              {ESP_UUID_LEN_16, (uint8_t *)&GATTS_CHAR_UUID_BUTTONS,
+                               ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, GATTS_CHAR_VAL_LEN_MAX, sizeof(buttons_value),
+                               (uint8_t *)buttons_value}},
 
     /* Characteristic Declaration */
     [IDX_CHAR_LEDS] = {{ESP_GATT_AUTO_RSP},
                        {ESP_UUID_LEN_16, (uint8_t *)&character_declaration_uuid, ESP_GATT_PERM_READ,
                         CHAR_DECLARATION_SIZE, CHAR_DECLARATION_SIZE, (uint8_t *)&char_prop_read_write}},
-
     /* Characteristic Value */
     [IDX_CHAR_VAL_LEDS] = {{ESP_GATT_AUTO_RSP},
-                           {ESP_UUID_LEN_16, (uint8_t *)&GATTS_CHAR_UUID_TEST_C,
-                            ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, GATTS_DEMO_CHAR_VAL_LEN_MAX, sizeof(leds_value),
-                            (uint8_t *)leds_value}},
+                           {ESP_UUID_LEN_16, (uint8_t *)&GATTS_CHAR_UUID_LEDS, ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                            GATTS_CHAR_VAL_LEN_MAX, sizeof(leds_value), (uint8_t *)leds_value}},
 
+    /* Characteristic Declaration */
+    [IDX_CHAR_BATTERY] = {{ESP_GATT_AUTO_RSP},
+                          {ESP_UUID_LEN_16, (uint8_t *)&character_declaration_uuid, ESP_GATT_PERM_READ,
+                           CHAR_DECLARATION_SIZE, CHAR_DECLARATION_SIZE, (uint8_t *)&char_prop_read}},
+    /* Characteristic Value */
+    [IDX_CHAR_VAL_BATTERY] = {{ESP_GATT_RSP_BY_APP},
+                              {ESP_UUID_LEN_16, (uint8_t *)&GATTS_CHAR_UUID_BATTERY, ESP_GATT_PERM_READ,
+                               GATTS_CHAR_VAL_LEN_MAX, sizeof(battery_adc_value), (uint8_t *)battery_adc_value}},
 };
 
+
+/**
+ * @brief GAP event handler
+ *
+ * @param event
+ * @param param
+ */
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
     switch (event) {
         case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
@@ -209,63 +235,14 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     }
 }
 
-static void example_prepare_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env,
-                                            esp_ble_gatts_cb_param_t *param) {
-    ESP_LOGI(TAG, "prepare write, handle = %d, value len = %d", param->write.handle, param->write.len);
-    esp_gatt_status_t status = ESP_GATT_OK;
-    if (prepare_write_env->prepare_buf == NULL) {
-        prepare_write_env->prepare_buf = (uint8_t *)malloc(PREPARE_BUF_MAX_SIZE * sizeof(uint8_t));
-        prepare_write_env->prepare_len = 0;
-        if (prepare_write_env->prepare_buf == NULL) {
-            ESP_LOGE(TAG, "%s, Gatt_server prep no mem", __func__);
-            status = ESP_GATT_NO_RESOURCES;
-        }
-    } else {
-        if (param->write.offset > PREPARE_BUF_MAX_SIZE) {
-            status = ESP_GATT_INVALID_OFFSET;
-        } else if ((param->write.offset + param->write.len) > PREPARE_BUF_MAX_SIZE) {
-            status = ESP_GATT_INVALID_ATTR_LEN;
-        }
-    }
-    /*send response when param->write.need_rsp is true */
-    if (param->write.need_rsp) {
-        esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t));
-        if (gatt_rsp != NULL) {
-            gatt_rsp->attr_value.len      = param->write.len;
-            gatt_rsp->attr_value.handle   = param->write.handle;
-            gatt_rsp->attr_value.offset   = param->write.offset;
-            gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
-            memcpy(gatt_rsp->attr_value.value, param->write.value, param->write.len);
-            esp_err_t response_err =
-                esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, gatt_rsp);
-            if (response_err != ESP_OK) {
-                ESP_LOGE(TAG, "Send response error");
-            }
-            free(gatt_rsp);
-        } else {
-            ESP_LOGE(TAG, "%s, malloc failed", __func__);
-        }
-    }
-    if (status != ESP_GATT_OK) {
-        return;
-    }
-    memcpy(prepare_write_env->prepare_buf + param->write.offset, param->write.value, param->write.len);
-    prepare_write_env->prepare_len += param->write.len;
-}
 
-static void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param) {
-    if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC && prepare_write_env->prepare_buf) {
-        esp_log_buffer_hex(TAG, prepare_write_env->prepare_buf, prepare_write_env->prepare_len);
-    } else {
-        ESP_LOGI(TAG, "ESP_GATT_PREP_WRITE_CANCEL");
-    }
-    if (prepare_write_env->prepare_buf) {
-        free(prepare_write_env->prepare_buf);
-        prepare_write_env->prepare_buf = NULL;
-    }
-    prepare_write_env->prepare_len = 0;
-}
-
+/**
+ * @brief GATTS profile event handler
+ *
+ * @param event
+ * @param gatts_if
+ * @param param
+ */
 static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
                                         esp_ble_gatts_cb_param_t *param) {
     switch (event) {
@@ -292,14 +269,14 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             }
         } break;
         case ESP_GATTS_READ_EVT: {
-            ESP_LOGI(TAG, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d\n", param->read.conn_id,
+            ESP_LOGI(TAG, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d", param->read.conn_id,
                      param->read.trans_id, param->read.handle);
             esp_gatt_rsp_t rsp;
             memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
 
             if (gatt_handle_table[IDX_CHAR_VAL_BUTTONS] == param->read.handle) {
-                rsp.attr_value.handle   = param->read.handle;
-                rsp.attr_value.len      = 4;
+                rsp.attr_value.handle = param->read.handle;
+                rsp.attr_value.len    = 4;
                 xSemaphoreTake(sem, portMAX_DELAY);
                 rsp.attr_value.value[0] = buttons_value[0];
                 rsp.attr_value.value[1] = buttons_value[1];
@@ -307,12 +284,23 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 rsp.attr_value.value[3] = buttons_value[3];
                 xSemaphoreGive(sem);
                 esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+
+            } else if (gatt_handle_table[IDX_CHAR_VAL_BATTERY] == param->read.handle) {
+                rsp.attr_value.handle = param->read.handle;
+                rsp.attr_value.len    = 4;
+                xSemaphoreTake(sem, portMAX_DELAY);
+                rsp.attr_value.value[0] = battery_adc_value[0];
+                rsp.attr_value.value[1] = battery_adc_value[1];
+                rsp.attr_value.value[2] = battery_adc_value[2];
+                rsp.attr_value.value[3] = battery_adc_value[3];
+                xSemaphoreGive(sem);
+                esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
             }
             break;
         }
         case ESP_GATTS_WRITE_EVT:
             if (!param->write.is_prep) {
-                // the data length of gattc write  must be less than GATTS_DEMO_CHAR_VAL_LEN_MAX.
+                // the data length of gattc write  must be less than GATTS_CHAR_VAL_LEN_MAX.
                 ESP_LOGI(TAG, "GATT_WRITE_EVT, handle = %d, value len = %d, value :", param->write.handle,
                          param->write.len);
                 esp_log_buffer_hex(TAG, param->write.value, param->write.len);
@@ -331,13 +319,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 }
             } else {
                 /* handle prepare write */
-                example_prepare_write_event_env(gatts_if, &prepare_write_env, param);
             }
             break;
         case ESP_GATTS_EXEC_WRITE_EVT:
-            // the length of gattc prepare write data must be less than GATTS_DEMO_CHAR_VAL_LEN_MAX.
+            // the length of gattc prepare write data must be less than GATTS_CHAR_VAL_LEN_MAX.
             ESP_LOGI(TAG, "ESP_GATTS_EXEC_WRITE_EVT");
-            example_exec_write_event_env(&prepare_write_env, param);
             break;
         case ESP_GATTS_MTU_EVT:
             ESP_LOGI(TAG, "ESP_GATTS_MTU_EVT, MTU %d", param->mtu.mtu);
@@ -396,8 +382,14 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 }
 
 
+/**
+ * @brief GATTS event handler
+ *
+ * @param event
+ * @param gatts_if
+ * @param param
+ */
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-
     /* If event is register event, store the gatts_if for each profile */
     if (event == ESP_GATTS_REG_EVT) {
         if (param->reg.status == ESP_GATT_OK) {
@@ -420,9 +412,11 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     } while (0);
 }
 
+
 void gatt_server_init(void) {
     esp_err_t ret;
 
+    ESP_LOGI(TAG, "Gatt server inizialization");
     sem = xSemaphoreCreateMutex();
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
@@ -432,24 +426,32 @@ void gatt_server_init(void) {
     if (ret) {
         ESP_LOGE(TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;
+    } else {
+        ESP_LOGI(TAG, "BT controller initialized");
     }
 
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
     if (ret) {
         ESP_LOGE(TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;
+    } else {
+        ESP_LOGI(TAG, "BT controller enabled");
     }
 
     ret = esp_bluedroid_init();
     if (ret) {
         ESP_LOGE(TAG, "%s init bluetooth failed: %s", __func__, esp_err_to_name(ret));
         return;
+    } else {
+        ESP_LOGI(TAG, "Bluedroid initialized");
     }
 
     ret = esp_bluedroid_enable();
     if (ret) {
         ESP_LOGE(TAG, "%s enable bluetooth failed: %s", __func__, esp_err_to_name(ret));
         return;
+    } else {
+        ESP_LOGI(TAG, "Bluedroid enabled");
     }
 
     ret = esp_ble_gatts_register_callback(gatts_event_handler);
@@ -468,17 +470,28 @@ void gatt_server_init(void) {
     if (ret) {
         ESP_LOGE(TAG, "gatts app register error, error code = %x", ret);
         return;
+    } else {
+        ESP_LOGI(TAG, "Gatt server registered");
     }
 
     esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(500);
     if (local_mtu_ret) {
         ESP_LOGE(TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
+
+    ESP_LOGI(TAG, "Gatt server started");
 }
 
 
 void gatt_server_set_buttons(uint8_t buttons[4]) {
     xSemaphoreTake(sem, portMAX_DELAY);
     memcpy(buttons_value, buttons, 4);
+    xSemaphoreGive(sem);
+}
+
+
+void gatt_server_set_battery(uint32_t battery_adc_level) {
+    xSemaphoreTake(sem, portMAX_DELAY);
+    serialize_uint32_be(battery_adc_value, battery_adc_level);
     xSemaphoreGive(sem);
 }

@@ -1,3 +1,14 @@
+/**
+ * @file leds.c
+ * @author Maldus512 ()
+ * @brief Button LEDS module
+ * @version 0.1
+ * @date 2022-09-05
+ * 
+ * @copyright Copyright (c) 2022
+ * 
+ */
+
 #include <driver/gpio.h>
 #include <driver/ledc.h>
 #include "hardwareprofile.h"

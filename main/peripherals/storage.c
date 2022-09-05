@@ -1,3 +1,14 @@
+/**
+ * @file storage.c
+ * @author Maldus512 ()
+ * @brief Internal persistent storage helper module
+ * @version 0.1
+ * @date 2022-09-05
+ * 
+ * @copyright Copyright (c) 2022
+ * 
+ */
+
 #include <assert.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
