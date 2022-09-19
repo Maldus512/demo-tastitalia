@@ -117,5 +117,4 @@ static void adc_timer(TimerHandle_t timer) {
     // Convert adc_reading to voltage in mV
     // uint32_t voltage = esp_adc_cal_raw_to_voltage(adc_reading, &adc_chars);
     // printf("Raw: %d\tVoltage: %dmV\n", adc_reading, voltage);
-    vTaskDelay(pdMS_TO_TICKS(1000));
 }

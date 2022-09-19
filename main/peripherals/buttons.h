@@ -29,4 +29,7 @@ void    buttons_init(void);
 uint8_t buttons_event(keypad_update_t *update);
 
 
+uint32_t buttons_get_status(void);
+
+
 #endif

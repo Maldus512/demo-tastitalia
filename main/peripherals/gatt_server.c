@@ -414,12 +414,15 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
 
 
 void gatt_server_init(void) {
-    esp_err_t ret;
-
     ESP_LOGI(TAG, "Gatt server inizialization");
     sem = xSemaphoreCreateMutex();
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+}
+
+
+void gatt_server_start(void) {
+    esp_err_t ret;
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret                               = esp_bt_controller_init(&bt_cfg);
@@ -480,6 +483,16 @@ void gatt_server_init(void) {
     }
 
     ESP_LOGI(TAG, "Gatt server started");
+}
+
+
+void gatt_server_stop(void) {
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bluedroid_disable());
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bluedroid_deinit());
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bt_controller_disable());
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bt_controller_deinit());
+
+    ESP_LOGI(TAG, "Gatt server stopped");
 }
 
 

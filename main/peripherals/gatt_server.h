@@ -29,6 +29,12 @@ enum {
 void gatt_server_init(void);
 
 
+void gatt_server_start(void);
+
+
+void gatt_server_stop(void);
+
+
 /**
  * @brief Change the buttons state to be read from the GATT server
  * 

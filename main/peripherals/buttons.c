@@ -74,7 +74,8 @@ void buttons_init(void) {
     touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);
     touch_pad_fsm_start();
 
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
     ESP_LOGI(TAG, "Calibrating values");
     for (buttons_t i = 0; i < sizeof(pads) / sizeof(pads[i]); i++) {
         uint64_t average_value = 0;
@@ -86,7 +87,7 @@ void buttons_init(void) {
 
         initial_values[i] = average_value / 10;
     }
-
+    
     static StaticTimer_t timer_buffer;
     TimerHandle_t        timer = xTimerCreateStatic(TAG, pdMS_TO_TICKS(50), 1, NULL, tp_timer, &timer_buffer);
     xTimerStart(timer, portMAX_DELAY);
@@ -95,6 +96,25 @@ void buttons_init(void) {
 
 uint8_t buttons_event(keypad_update_t *update) {
     return xQueueReceive(queue, update, 0);
+}
+
+
+uint32_t buttons_get_status(void) {
+    uint32_t keymap = 0;
+    uint32_t values[4] = {0};
+
+    for (buttons_t i = 0; i < sizeof(pads) / sizeof(pads[0]); i++) {
+        uint32_t touch_value = read_button(i);
+        values[i]            = touch_value;
+        if (touch_value > initial_values[i] + TP_THRESHOLD) {
+            keymap |= (1 << i);
+        }
+    }
+    
+    // ESP_LOGI(TAG, "%6i %6i %6i %6i", initial_values[0], initial_values[1], initial_values[2], initial_values[3]);
+    //ESP_LOGI(TAG, "%6i %6i %6i %6i %X", values[0], values[1], values[2], values[3], status);
+
+    return keymap;
 }
 
 
@@ -117,20 +137,7 @@ static uint32_t read_button(buttons_t button) {
  * @param timer
  */
 static void tp_timer(TimerHandle_t timer) {
-    unsigned int keymap = 0;
-
-    uint32_t values[4] = {0};
-
-    for (buttons_t i = 0; i < sizeof(pads) / sizeof(pads[0]); i++) {
-        uint32_t touch_value = read_button(i);
-        values[i]            = touch_value;
-        if (touch_value > initial_values[i] + TP_THRESHOLD) {
-            keymap |= (1 << i);
-        }
-    }
-
-    //ESP_LOGI(TAG, "%6i %6i %6i %6i", initial_values[0], initial_values[1], initial_values[2], initial_values[3]);
-    //ESP_LOGI(TAG, "%6i %6i %6i %6i", values[0], values[1], values[2], values[3]);
+    uint32_t keymap = buttons_get_status();
 
     keypad_update_t update = keypad_routine(buttons, 100, 1500, 100, get_millis(), keymap);
     if (update.event != KEY_NOTHING) {
